@@ -1,5 +1,5 @@
 {
-  "model": "v3",
+  "model": "v4",
   "base_seed": 20261122,
   "n_per_seed": 10000,
   "train_seeds": 5,

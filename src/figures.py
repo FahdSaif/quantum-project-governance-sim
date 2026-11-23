@@ -1,4 +1,4 @@
-"""Builds manuscript figures from ./results CSVs (model v3)."""
+"""Builds manuscript figures from ./results CSVs (model v4)."""
 from pathlib import Path
 import numpy as np, pandas as pd
 import matplotlib
@@ -19,23 +19,24 @@ p = pd.read_csv(R / "core_paired_contrasts.csv"); p = p[p.regime == "own_model"]
 sc = list(dict.fromkeys(p.scenario))
 lab = ["S1\nCalibrated,\nstrong", "S2\nOverconf.,\nweak", "S3\nCalibrated,\nweak", "S4\nLarge\nblocks",
        "S5\nCostly\nmonitoring", "S6\nShared bias\n(misperc.)", "S6b\nShared bias\n(known)",
-       "S7\nEscalation-\nprone forum", "S8\nDecision\nlag"]
+       "S7\nEscalation-\nprone forum", "S8\nDecision\nlag", "S9\nLarge blocks\n+ lag"]
 series = [("QV-Q", C1, "Verification at gates (QV − Q)"),
           ("E-QV", C2, "Triggered timing, given verification (E − QV)"),
-          ("GA-Q", C3, "Aligning gates with commitments (GA − Q)")]
-fig, ax = plt.subplots(figsize=(6.9, 3.2))
-x = np.arange(len(sc)); w = 0.26
+          ("GA-Q", C3, "Aligning gates with renewals (GA − Q)"),
+          ("GAL-Q", C4, "Aligning decision effects with renewals (GA$_\\ell$ − Q)")]
+fig, ax = plt.subplots(figsize=(6.9, 3.4))
+x = np.arange(len(sc)); w = 0.2
 for k, (c, col, name) in enumerate(series):
     d = p[p.contrast == c].set_index("scenario").loc[sc]
-    off = (k - 1) * (w + 0.01)
+    off = (k - 1.5) * (w + 0.005)
     ax.bar(x + off, d["diff"], w, color=col, label=name, zorder=3)
     ax.errorbar(x + off, d["diff"], yerr=[d["diff"] - d["lo"], d["hi"] - d["diff"]], fmt="none",
                 ecolor=INK2, elinewidth=0.6, capsize=1.5, zorder=4)
 ax.axhline(0, color=INK2, lw=0.8, zorder=2)
-ax.set_xticks(x, lab, fontsize=6.6)
+ax.set_xticks(x, lab, fontsize=6.2)
 ax.set_ylabel("Paired difference in mean\nnet value (value units)")
 ax.yaxis.grid(True, color=GRID, lw=0.6, zorder=0)
-ax.legend(frameon=False, fontsize=7, loc="lower left")
+ax.legend(frameon=False, fontsize=6.5, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2)
 fig.tight_layout(); fig.savefig(F / "fig2_decomposition.pdf"); plt.close(fig)
 
 # ---- Figure 3: threshold sensitivity
@@ -56,25 +57,30 @@ fig.tight_layout(rect=(0, 0, 1, 0.93)); fig.savefig(F / "fig3_threshold.pdf"); p
 
 # ---- Figure 4: scenario discovery (own-model thresholds)
 x = pd.read_csv(R / "exploratory_futures.csv")
-gate = x[["F_own", "Q_own", "QV_own", "GA_own", "GAV_own"]].max(axis=1)
+gate = x[["F_own", "Q_own", "QV_own", "GA_own", "GAV_own", "GAL_own"]].max(axis=1)
 x["trig"] = x[["U_own", "E_own"]].max(axis=1) > gate
 x["verpay"] = x.QV_own > x.Q_own
 x["alignpay"] = (x.GA_own - x.Q_own) > 0.05
-fig, axes = plt.subplots(1, 3, figsize=(7.4, 2.7))
-fig.subplots_adjust(wspace=0.62)
+x["alignlpay"] = (x.GAL_own - x.Q_own) > 0.05
+fig, axes = plt.subplots(2, 2, figsize=(6.4, 5.0))
+fig.subplots_adjust(wspace=0.5, hspace=0.75)
+axes = axes.ravel()
 mb = pd.cut(x.monitor_fee, [0, .05, .10, .15, .20, .30, .50], include_lowest=True)
 g1 = x.groupby([x.block, mb], observed=False).trig.mean().unstack()
 ab = pd.cut(x.ver_adv, [-.05, .05, .15, .25], include_lowest=True)
 fb = pd.cut(x.ver_fee, [.1, .4, .7, 1.0], include_lowest=True)
 g2 = x.groupby([fb, ab], observed=False).verpay.mean().unstack()
 g3 = x.groupby([x.block, x.lag], observed=False).alignpay.mean().unstack()
+g4 = x.groupby([x.block, x.lag], observed=False).alignlpay.mean().unstack()
 panels = [
     (axes[0], g1, "Monitoring fee (× operating cost)", "Commitment block",
      ["0–.05", ".05–.1", ".1–.15", ".15–.2", ".2–.3", ".3–.5"], [str(b) for b in g1.index], "(a) Event-triggered review is best"),
     (axes[1], g2, "Verification accuracy advantage", "Verification fee",
      ["−.05–.05", ".05–.15", ".15–.25"], [".1–.4", ".4–.7", ".7–1"], "(b) Verification improves gates"),
     (axes[2], g3, "Decision lag (periods)", "Commitment block",
-     ["0", "1", "2"], [str(b) for b in g3.index], "(c) Aligned gates beat quarterly"),
+     ["0", "1", "2"], [str(b) for b in g3.index], "(c) GA beats quarterly gates"),
+    (axes[3], g4, "Decision lag (periods)", "Commitment block",
+     ["0", "1", "2"], [str(b) for b in g4.index], "(d) GA$_\\ell$ beats quarterly gates"),
 ]
 for ax, g, xl, yl, xt, yt, ttl in panels:
     im = ax.imshow(g.values * 100, cmap="Blues", vmin=0, vmax=100, aspect="auto", origin="lower")

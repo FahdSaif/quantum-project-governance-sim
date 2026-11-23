@@ -1,15 +1,27 @@
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
  & \multicolumn{3}{c}{Own-model thresholds} & \multicolumn{3}{c}{Tuned thresholds} \\
-\cmidrule(lr){2-4}\cmidrule(l){5-7}
-Policy & Best (\%) & Mean regret & Max.\ regret & Best (\%) & Mean regret & Max.\ regret \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Policy & Best (\%) & Mean & Max. & Best (\%) & Mean & Max. \\
 \midrule
-F & 9.6 & 0.52 & 2.94 & 12.9 & 0.69 & 2.87 \\
-Q & 26.6 & 0.40 & 3.16 & 22.5 & 0.40 & 2.62 \\
-QV & 5.5 & 0.52 & 3.46 & 14.7 & 0.44 & \textbf{2.12} \\
-GA & 26.7 & \textbf{0.24} & \textbf{2.72} & 19.7 & \textbf{0.37} & 2.67 \\
-GAV & 10.4 & 0.34 & 3.09 & 8.7 & 0.44 & 3.08 \\
-U & 16.1 & 1.39 & 5.01 & 11.5 & 1.37 & 5.29 \\
-E & 5.0 & 1.51 & 4.99 & 9.9 & 1.35 & 5.28 \\
+\multicolumn{7}{@{}l}{\textit{All 1,500 futures ($n=1,500$)}} \\
+F & 3.7 & 0.82 & 3.32 & 4.1 & 0.94 & 3.03 \\
+Q & 9.1 & 0.53 & 2.12 & 7.2 & 0.66 & 2.62 \\
+QV & 3.4 & 0.64 & 2.42 & 5.1 & 0.69 & 2.12 \\
+GA & 14.7 & 0.54 & 2.90 & 12.9 & 0.63 & 2.79 \\
+GAV & 3.5 & 0.64 & 2.90 & 5.2 & 0.69 & 3.18 \\
+GA$_\ell$ & 49.0 & \textbf{0.10} & \textbf{1.51} & 52.0 & \textbf{0.10} & \textbf{1.67} \\
+U & 12.0 & 1.52 & 5.02 & 6.3 & 1.63 & 5.62 \\
+E & 4.5 & 1.65 & 5.05 & 7.1 & 1.60 & 5.91 \\
+\addlinespace[3pt]
+\multicolumn{7}{@{}l}{\textit{Futures in which GA differs from Q by construction ($b\in\{2,4,6\}$) ($n=900$)}} \\
+F & 0.0 & 0.91 & 3.32 & 0.1 & 1.06 & 3.03 \\
+Q & 0.0 & 0.62 & 2.12 & 0.0 & 0.79 & 2.62 \\
+QV & 1.0 & 0.72 & 2.42 & 1.6 & 0.81 & 2.12 \\
+GA & 24.6 & 0.63 & 2.90 & 21.4 & 0.74 & 2.79 \\
+GAV & 5.9 & 0.72 & 2.90 & 8.7 & 0.81 & 3.18 \\
+GA$_\ell$ & 56.1 & \textbf{0.06} & \textbf{1.18} & 59.6 & \textbf{0.05} & \textbf{1.58} \\
+U & 9.4 & 1.67 & 5.02 & 4.2 & 1.83 & 5.62 \\
+E & 3.0 & 1.80 & 5.05 & 4.4 & 1.80 & 5.91 \\
 \bottomrule
 \end{tabular}

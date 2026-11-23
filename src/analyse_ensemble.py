@@ -8,7 +8,7 @@ from sklearn.tree import DecisionTreeClassifier, export_text
 
 R = Path(__file__).resolve().parents[1] / "results"
 x = pd.read_csv(R / "exploratory_futures.csv")
-P = ["F", "Q", "QV", "GA", "GAV", "U", "E"]
+P = ["F", "Q", "QV", "GA", "GAV", "GAL", "U", "E"]
 FEAT = ["q_true", "miscal", "block", "monitor_fee", "review_fee", "ver_fee", "ver_adv", "rho",
         "rho_known", "value", "beta", "lag"]
 LABEL = {"q_true": "Evidence reliability q", "miscal": "Miscalibration", "block": "Commitment block",
@@ -17,13 +17,19 @@ LABEL = {"q_true": "Evidence reliability q", "miscal": "Miscalibration", "block"
          "value": "Terminal value", "beta": "Continuation bias", "lag": "Decision lag"}
 out = {}
 
-# regret tables (both regimes)
+# sanity: non-renewal never changes net value (Section 4.3)
+out["max_abs_diff_nonrenewal_vs_policy_specific"] = float(max((x[f"{p}_nr"] - x[f"{p}_own"]).abs().max() for p in P))
+
+# regret tables: all futures, and futures where GA differs from Q by construction (b in {2,4,6})
 reg = []
-for suf, regime in (("own", "own-model thresholds"), ("net", "tuned thresholds")):
-    for p in P:
-        r = x[f"{p}_regret_{suf}"]
-        reg.append(dict(regime=regime, policy=p, best_pct=100 * (x[f"winner_{suf}"] == p).mean(),
-                        mean_regret=r.mean(), p90_regret=r.quantile(.9), max_regret=r.max()))
+subsets = {"all": x, "b246": x[x.block.isin([2, 4, 6])]}
+for sub, xs in subsets.items():
+    for suf, regime in (("own", "own-model (policy-specific)"), ("net", "tuned thresholds"), ("v3", "own-model (v3 rule)")):
+        for p in P:
+            r = xs[f"{p}_regret_{suf}"]
+            reg.append(dict(subset=sub, n=len(xs), regime=regime, policy=p,
+                            best_pct=100 * (xs[f"winner_{suf}"] == p).mean(),
+                            mean_regret=r.mean(), p90_regret=r.quantile(.9), max_regret=r.max()))
 pd.DataFrame(reg).to_csv(R / "ensemble_regret.csv", index=False)
 
 # outcome contrasts (own-model = primary)
@@ -31,15 +37,20 @@ s = "own"
 x["timing"] = x[f"E_{s}"] - x[f"QV_{s}"]
 x["verif"] = x[f"QV_{s}"] - x[f"Q_{s}"]
 x["alignv"] = x[f"GA_{s}"] - x[f"Q_{s}"]
-x["trig_wins"] = (x[[f"U_{s}", f"E_{s}"]].max(axis=1) > x[[f"F_{s}", f"Q_{s}", f"QV_{s}", f"GA_{s}", f"GAV_{s}"]].max(axis=1)).astype(int)
+x["alignl"] = x[f"GAL_{s}"] - x[f"Q_{s}"]
+x["align_fee"] = x["Q_gov"] - x["GA_gov"]
+x["alignl_fee"] = x["Q_gov"] - x["GAL_gov"]
+x = x.copy()
+x["trig_wins"] = (x[[f"U_{s}", f"E_{s}"]].max(axis=1) > x[[f"F_{s}", f"Q_{s}", f"QV_{s}", f"GA_{s}", f"GAV_{s}", f"GAL_{s}"]].max(axis=1)).astype(int)
 
 imp_rows = []
-for target in ["timing", "verif", "alignv"]:
+for target in ["timing", "verif", "alignv", "alignl"]:
     rf = RandomForestRegressor(n_estimators=400, min_samples_leaf=5, random_state=0, n_jobs=-1, oob_score=True)
     rf.fit(x[FEAT], x[target])
     pi = permutation_importance(rf, x[FEAT], x[target], n_repeats=10, random_state=0, n_jobs=-1)
     tot = pi.importances_mean.clip(min=0).sum()
     for f, v in zip(FEAT, pi.importances_mean):
+        # normalised permutation importance (share of the summed positive importances); not a variance share
         imp_rows.append(dict(target=target, factor=LABEL[f], share=max(v, 0) / tot, oob_r2=rf.oob_score_))
 pd.DataFrame(imp_rows).to_csv(R / "ensemble_importance.csv", index=False)
 
@@ -64,6 +75,23 @@ out["B_dominates_F_Q_U_GA_own_min_margin"] = float((x.B_net - x[[f"{p}_own" for 
 out["B_dominates_F_Q_U_GA_tuned_min_margin"] = float((x.B_net - x[[f"{p}_net" for p in ["F", "Q", "U", "GA"]]].max(axis=1)).min())
 out["align_pays_share_block_ge3"] = float((x[x.block >= 3].alignv > 0.05).mean())
 out["align_mean_gain_block_ge3"] = float(x[x.block >= 3].alignv.mean())
+b246 = x[x.block.isin([2, 4, 6])]
+out["align_b246"] = dict(n=len(b246), mean_gain=float(b246.alignv.mean()), mean_fee_part=float(b246.align_fee.mean()),
+                         mean_timing_part=float((b246.alignv - b246.align_fee).mean()),
+                         pays_share=float((b246.alignv > 0.05).mean()),
+                         l_mean_gain=float(b246.alignl.mean()), l_mean_fee_part=float(b246.alignl_fee.mean()),
+                         l_mean_timing_part=float((b246.alignl - b246.alignl_fee).mean()))
+lag1 = x[x.lag >= 1]
+out["alignl_lag_ge1"] = dict(n=len(lag1), mean_gain=float(lag1.alignl.mean()), fee=float(lag1.alignl_fee.mean()),
+                             timing=float((lag1.alignl - lag1.alignl_fee).mean()))
+for lab, suf in (("v3", "v3"), ("policy", "own"), ("tuned", "net")):
+    out[f"GA_minus_Q_b246_{lab}"] = float((b246[f"GA_{suf}"] - b246[f"Q_{suf}"]).mean())
+    out[f"GAL_minus_Q_b246_{lab}"] = float((b246[f"GAL_{suf}"] - b246[f"Q_{suf}"]).mean())
+out["align_by_block_lag"] = {f"b{b}_l{l}": [round(float((g.alignv > .05).mean()), 3), round(float((g.alignl > .05).mean()), 3),
+                                            round(float(g.alignv.mean()), 3), round(float(g.alignl.mean()), 3), len(g)]
+                             for (b, l), g in x.groupby(["block", "lag"])}
+out["alignl_pays_lag_ge1"] = float((x[x.lag >= 1].alignl > 0.05).mean())
+out["GAL_minus_GA_lag_ge1_b_ge2"] = float((x[(x.lag >= 1) & (x.block >= 2)].GAL_own - x[(x.lag >= 1) & (x.block >= 2)].GA_own).mean())
 out["verif_pays_adv_gt_175_rho_le_2"] = float((x[(x.ver_adv > .175) & (x.rho <= .2)].verif > 0).mean())
 out["verif_pays_adv_lt_025_rho_gt_6"] = float((x[(x.ver_adv < .025) & (x.rho > .6)].verif > 0).mean())
 out["trig_wins_fee_le_05_block_le_2_lag0"] = [float(x[(x.monitor_fee <= .05) & (x.block <= 2) & (x.lag == 0)].trig_wins.mean()),
@@ -81,3 +109,4 @@ print(pd.DataFrame(reg).round(2).to_string())
 imp = pd.DataFrame(imp_rows)
 print(imp.pivot(index="factor", columns="target", values="share").round(3))
 print(imp.groupby("target").oob_r2.first())
+print(json.dumps(out["align_by_block_lag"], indent=0))
