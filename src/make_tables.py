@@ -1,6 +1,7 @@
-"""Generates LaTeX tables directly from result CSVs (model v4; no hand-typed numbers)."""
+"""Generates LaTeX tables directly from result CSVs (model v5; no hand-typed numbers)."""
 from pathlib import Path
 import json
+import numpy as np
 import pandas as pd
 
 R = Path(__file__).resolve().parents[1] / "results"
@@ -11,7 +12,7 @@ scen = list(dict.fromkeys(core.scenario))
 sid = {s: s.split(" ", 1)[0] for s in scen}
 sname = {s: s.split(" ", 1)[1] for s in scen}
 POL = ["F", "Q", "QV", "GA", "GAV", "GAL", "U", "E", "E_m"]
-PL = {"E_m": r"E$_m$", "GAL": r"GA$_\ell$"}
+PL = {"E_m": r"E$_m$", "GAL": r"GA$_\ell$", "GALp": r"GA$_\ell^{+}$", "QVo": r"QV$^{*}$", "GAVo": r"GAV$^{*}$", "GALVo": r"GA$_\ell$V$^{*}$", "Eo": r"E$^{*}$"}
 NC = len(POL) + 3
 
 
@@ -41,9 +42,8 @@ def core_table(panels, fname):
   (T / fname).write_text("\n".join(lines))
 
 
-core_table((("own_model", "Panel A. Own-model thresholds computed over each policy's own decision schedule"),
-            ("tuned", "Panel B. Thresholds tuned on training runs")), "tab_core.tex")
-core_table((("own_v3", "Own-model thresholds under the v3 rule (continuous-review value function for every policy)"),), "stab_v3.tex")
+core_table((("own_model", "Own-model thresholds computed over each policy's own decision schedule"),), "tab_core.tex")
+core_table((("own_v3", "Own-model thresholds under the continuous-review approximation (one threshold path for every policy)"),), "stab_v3.tex")
 
 # --- Table 4: contrasts, two panels
 CS = ["U-Q", "QV-Q", "E-QV", "E-E_m", "GA-Q", "GAL-Q"]
@@ -63,6 +63,7 @@ def contrast_table(regime, fname, ci=True):
 hw = contrast_table("own_model", "tab_contrasts.tex", ci=False)
 (T / "tab_contrasts_hw.tex").write_text(f"{hw:.2f}")
 contrast_table("tuned", "stab_contrasts_tuned.tex")
+contrast_table("own_model", "stab_contrasts_own.tex")
 
 # --- Table 5: regret, all futures and futures with b in {2,4,6}
 rg = pd.read_csv(R / "ensemble_regret.csv")
@@ -112,7 +113,7 @@ def cv(sc, reg, c):
 lines = [r"\begin{tabular}{@{}llrrrrrr@{}}", r"\toprule",
          r" & & \multicolumn{3}{c}{Own-model thresholds} & & \multicolumn{2}{c}{Split of (b)} \\",
          r"\cmidrule(lr){3-5}\cmidrule(l){7-8}",
-         r"Setting & Contrast & (a) v3 rule & (b) Policy-specific & (c) (b) + non-renewal & Tuned & Review fees & Timing \\", r"\midrule"]
+         r"Setting & Contrast & (a) Continuous review & (b) Policy-specific & (c) (b) + do-not-renew & Tuned & Review fees & Timing \\", r"\midrule"]
 for sc, lab in (("S4", "S4: $b=4$, $\\ell=0$"), ("S9", "S9: $b=4$, $\\ell=1$"), ("S8", "S8: $b=1$, $\\ell=2$")):
     for c, cl in (("GA-Q", "GA$-$Q"), ("GAL-Q", r"GA$_\ell-$Q")):
         if sc == "S4" and c == "GAL-Q":
@@ -199,3 +200,111 @@ for k, v in trees.items():
     txt.append(r"\begin{verbatim}" + "\n" + v["text"] + r"\end{verbatim}")
 (T / "stab_trees.tex").write_text("\n".join(txt))
 print("tables written")
+
+
+# ================================================================== v5 tables
+def sidf(name):
+    return name.split(" ")[0]
+
+# --- Table: exercisable flexibility index (%), own-model rules
+fx = pd.read_csv(R / "flex_index.csv")
+FP = ["Q", "QV", "QVo", "GA", "GAL", "GALp", "GALVo", "U", "E", "Eo"]
+lines = [r"\begin{tabular}{@{}l" + "r" * len(FP) + "@{}}", r"\toprule",
+         "Scenario & " + " & ".join(PL.get(p, p) for p in FP) + r" \\", r"\midrule",
+         r"\multicolumn{" + str(len(FP) + 1) + r"}{@{}l}{\textit{Panel A. Exercisable-flexibility index (\%): share of the value of ideal stopping captured (Eq.~1)}} \\"]
+for sc in dict.fromkeys(fx.scenario):
+    d = fx[fx.scenario == sc].set_index("policy")
+    m = d.loc[FP, "EF"].max()
+    cells = [(r"\textbf{" if abs(d.loc[p, "EF"] - m) < 1e-9 else "") + f"{100*d.loc[p,'EF']:.0f}" + ("}" if abs(d.loc[p, "EF"] - m) < 1e-9 else "") for p in FP]
+    lines.append(f"{sid[sc]} {sname[sc]} & " + " & ".join(cells) + r" \\")
+lines += [r"\addlinespace[3pt]",
+          r"\multicolumn{" + str(len(FP) + 1) + r"}{@{}l}{\textit{Panel B. Committed spending lost per stop (value units; all other scenarios: 0)}} \\"]
+for sc in dict.fromkeys(fx.scenario):
+    if sid[sc] not in ("S4", "S8", "S9"):
+        continue
+    d = fx[fx.scenario == sc].set_index("policy")
+    lines.append(f"{sid[sc]} {sname[sc]} & " + " & ".join(f"{d.loc[p,'waste_per_stop']:.2f}" for p in FP) + r" \\")
+lines += [r"\bottomrule", r"\end{tabular}"]
+(T / "tab_flex.tex").write_text("\n".join(lines))
+
+# --- Table: boundary conditions (recoverable commitments, irregular calendars)
+rc = pd.read_csv(R / "recoverable.csv"); ir = pd.read_csv(R / "irregular.csv")
+for c in ("GA", "GAL", "GALp"):
+    ir[c + "-Q"] = ir[c] - ir.Q
+lines = [r"\begin{tabular}{@{}lrrrrr@{}}", r"\toprule",
+         r"\multicolumn{6}{@{}l}{\textit{Panel A. Partly recoverable commitments: share of unused prepaid cost refunded on stopping}} \\",
+         r"Setting & Contrast & 0\% & 25\% & 50\% & 100\% \\", r"\midrule"]
+for (b, lag, c, lab) in ((4, 0, "GA-Q", "$b=4$, $\\ell=0$"), (4, 1, "GA-Q", "$b=4$, $\\ell=1$"),
+                         (4, 1, "GAL-Q", ""), (6, 0, "GA-Q", "$b=6$, $\\ell=0$"), (4, 0, "U-Q", "$b=4$, $\\ell=0$")):
+    d = rc[(rc.block == b) & (rc.lag == lag)].set_index("recover")
+    cl = {"GA-Q": "GA$-$Q", "GAL-Q": r"GA$_\ell-$Q", "U-Q": "U$-$Q"}[c]
+    lines.append(f"{lab} & {cl} & " + " & ".join(f"{d.loc[r, c]:+.2f}" for r in (0.0, 0.25, 0.5, 1.0)) + r" \\")
+d = rc[(rc.block == 4) & (rc.lag == 0)].set_index("recover")
+lines.append(r"$b=4$, $\ell=0$ & Unrecovered prepaid cost, Q$-$GA & " + " & ".join(f"{d.loc[r,'Q_stranded_net'] - d.loc[r,'GA_stranded_net']:+.2f}" for r in (0.0, 0.25, 0.5, 1.0)) + r" \\")
+lines += [r"\addlinespace[3pt]",
+          r"\multicolumn{6}{@{}l}{\textit{Panel B. 200 random irregular renewal calendars (mean difference; share of calendars $>0$)}} \\",
+          r"Decision lag & & GA$-$Q & GA$_\ell-$Q & GA$_\ell^{+}-$Q & \\", r"\midrule"]
+for lag in (0, 1, 2):
+    g = ir[ir.lag == lag]
+    lines.append(f"$\\ell={lag}$ & & " + " & ".join(f"{g[c+'-Q'].mean():+.2f} ({100*(g[c+'-Q']>0).mean():.0f}\\%)" for c in ("GA", "GAL", "GALp")) + r" & \\")
+lines += [r"\bottomrule", r"\end{tabular}"]
+(T / "tab_boundary.tex").write_text("\n".join(lines))
+
+# --- Table: regret across futures with uncertain termination lag (Study 3)
+x3 = pd.read_csv(R / "exploratory_futures_v5.csv")
+P3 = ["F", "Q", "QV", "QVo", "GA", "GAV", "GAL", "GALp", "GALVo", "U", "E", "Eo"]
+def regtab(xs, pols):
+    vals = xs[[p + "_own" for p in pols]].values
+    best = xs[[p + "_own" for p in pols]].max(axis=1)
+    tie = np.abs(vals - best.values[:, None]) < 1e-12          # ties shared equally
+    share = (tie / tie.sum(axis=1, keepdims=True)).mean(axis=0)
+    win = dict(zip(pols, share))
+    return {p: (100 * win[p], (best - xs[p + "_own"]).mean(), (best - xs[p + "_own"]).quantile(.9),
+                (best - xs[p + "_own"]).max()) for p in pols}
+subs = (("all", x3, "All futures"), ("b246", x3[x3.block.isin([2, 4, 6])], "$b\\in\\{2,4,6\\}$"))
+res = {k: regtab(xs, P3) for k, xs, _ in subs}
+lines = [r"\begin{tabular}{@{}lrrrrrrrr@{}}", r"\toprule",
+         " & " + " & ".join(r"\multicolumn{4}{c}{" + t + f" ($n={len(xs):,}$)" + "}" for _, xs, t in subs) + r" \\",
+         r"\cmidrule(lr){2-5}\cmidrule(l){6-9}",
+         r"Policy & Best (\%) & Mean & P90 & Max. & Best (\%) & Mean & P90 & Max. \\", r"\midrule"]
+mins = {k: [min(v[p][j] for p in P3) for j in range(4)] for k, v in res.items()}
+for p in P3:
+    cells = []
+    for k, _, _ in subs:
+        b, m, p9, mx = res[k][p]
+        cells += [f"{b:.1f}"] + [(r"\textbf{" + f"{v:.2f}" + "}") if abs(v - mins[k][j]) < 1e-9 else f"{v:.2f}" for j, v in ((1, m), (2, p9), (3, mx))]
+    lines.append(PL.get(p, p) + " & " + " & ".join(cells) + r" \\")
+lines += [r"\bottomrule", r"\end{tabular}"]
+(T / "tab_regret3.tex").write_text("\n".join(lines))
+json.dump({k: {p: [float(z) for z in v] for p, v in r.items()} for k, r in res.items()}, open(R / "study3_regret.json", "w"), indent=1)
+
+# --- Supplementary: verification rule (net values), lag grid, evidence cost
+vr = pd.read_csv(R / "verrule_results.csv")
+VP = ["Q", "QV", "QVo", "GA", "GAV", "GAVo", "GAL", "GALVo", "U", "E", "Eo"]
+lines = [r"\begin{tabular}{@{}l" + "r" * len(VP) + "@{}}", r"\toprule",
+         "Scenario & " + " & ".join(PL.get(p, p) for p in VP) + r" \\", r"\midrule"]
+for sc in dict.fromkeys(vr.scenario):
+    d = vr[vr.scenario == sc].set_index("policy")
+    m = d.loc[VP, "mean_net_value"].max()
+    lab = sc if "beta" in sc else f"{sid[sc]} {sname[sc]}"
+    lab = lab.replace("beta=", "$\\beta=$")
+    lines.append(lab + " & " + " & ".join((r"\textbf{" + f"{d.loc[p,'mean_net_value']:.2f}" + "}") if abs(d.loc[p, 'mean_net_value'] - m) < 1e-9 else f"{d.loc[p,'mean_net_value']:.2f}" for p in VP) + r" \\")
+lines += [r"\bottomrule", r"\end{tabular}"]
+(T / "stab_verrule.tex").write_text("\n".join(lines))
+
+lu = pd.read_csv(R / "lagunc_results.csv")
+lines = [r"\begin{tabular}{@{}rrrrrrrrr@{}}", r"\toprule",
+         r"$b$ & Planned $\hat\ell$ & Bias & Spread & Q & GA & GA$_\ell$ & GA$_\ell^{+}$ & GA$_\ell$ (oracle) \\", r"\midrule"]
+for _, r in lu.iterrows():
+    lines.append(f"{int(r.block)} & {int(r.planned)} & {int(r.bias):+d} & {int(r.spread)} & {r.Q:.2f} & {r.GA:.2f} & {r.GAL:.2f} & {r.GALp:.2f} & {r.GAL_oracle:.2f}" + r" \\")
+lines += [r"\bottomrule", r"\end{tabular}"]
+(T / "stab_lagunc.tex").write_text("\n".join(lines))
+
+ec = pd.read_csv(R / "evidence_cost.csv")
+lines = [r"\begin{tabular}{@{}lrrrr@{}}", r"\toprule", r"Scenario & Evidence cost & U$-$Q & E$-$QV & GA$-$Q \\", r"\midrule"]
+for _, r in ec.iterrows():
+    lines.append(f"{sid[r.scenario]} & {r.report_fee:.2f} & {r['U-Q']:+.2f} & {r['E-QV']:+.2f} & {r['GA-Q']:+.2f}" + r" \\")
+lines += [r"\bottomrule", r"\end{tabular}"]
+(T / "stab_evcost.tex").write_text("\n".join(lines))
+regret_table((("own-model (policy-specific)", "Own-model thresholds"), ("tuned thresholds", "Tuned thresholds")), "stab_regret_s2.tex")
+core_table((("tuned", "Thresholds tuned on training runs"),), "stab_core_tuned.tex")

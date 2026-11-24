@@ -13,12 +13,12 @@ All data are **synthetic**. No real projects, organisations or people are repres
 | Path | Contents |
 |---|---|
 | `src/governance_sim.py` | The model: projects, governance policies, policy-specific and continuous-review own-model thresholds, do-not-renew rule, serially correlated signals, Bayes-optimal benchmarks (B, BV) |
-| `src/experiments.py` | Study 1 (ten focal scenarios), continuation-bias sweep, serial-correlation check and Study 2 (1,500 sampled futures) |
+| `src/experiments.py` | Study 1 (ten focal scenarios), Study 2 (1,500 futures), Study 3 (uncertain execution time), targeted experiments (misjudged lag, verification rule, evidence cost, recoverable commitments, irregular calendars), exercisable-flexibility index, continuation-bias sweep, serial-correlation check |
 | `src/analyse_ensemble.py` | Regret, random-forest permutation importance, scenario-discovery trees |
 | `src/make_tables.py` | Builds every LaTeX table in the paper from `results/` |
 | `src/figures.py` | Builds Figures 2–4 from `results/` |
 | `src/orig.py` | Original (v1) implementation, kept unchanged for the verification check |
-| `tests/test_model.py` | 14 verification tests (parity with v1, scale invariance, benchmark dominance, policy-specific thresholds, do-not-renew equivalence, lag-aware gates, serial correlation) |
+| `tests/test_model.py` | 24 verification tests (parity with v1 and v4, scale invariance, benchmark dominance, policy-specific thresholds, do-not-renew equivalence, lag-aware gates, serial correlation, uncertain lags, refunds, calendars, value-based verification) |
 | `CHANGELOG.md` | Model and analysis changes by version |
 | `results/` | Simulation outputs used in the paper |
 | `figures/`, `tables/` | Figures and tables as they appear in the paper |
@@ -33,6 +33,8 @@ All data are **synthetic**. No real projects, organisations or people are repres
 | GA | Renewal-dated gates: end of block, every b·⌈3/b⌉ periods (b=1,3: 3,6,9; b=2,4: 4,8; b=6: 6) |
 | GAV | Renewal-dated gates with verification |
 | GAL | Lag-aware aligned gates: GA gates moved ℓ periods earlier so that stops take effect at renewals |
+| GALp | Lag-aware gates planned with a one-period safety margin (ℓ+1) |
+| QVo, GAVo, GALVo, Eo | Value-based verification: verification bought only when its expected decision value exceeds its fee |
 | U | Evidence-triggered review, no verification |
 | E | Evidence-triggered review with verification |
 | E_m | As E, but verification no more accurate than routine evidence (control) |
@@ -44,7 +46,7 @@ Requires Python 3.10 or later.
 
 ```bash
 pip install -r requirements.txt
-bash run_all.sh          # about 10 minutes; regenerates results/, tables/ and figures/
+bash run_all.sh          # about 12 minutes; regenerates results/, tables/ and figures/
 python -m pytest -q      # verification tests
 ```
 

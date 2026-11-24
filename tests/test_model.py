@@ -11,8 +11,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 from governance_sim import (Env, Draws, POLICIES, run_policy, run_benchmark,  # noqa: E402
-                            own_model_thresholds, policy_thresholds, aligned_gates,
-                            renewal_aligned_gates, decision_points, routine_signals, H)
+                            own_model_thresholds, policy_thresholds, policy_tables, aligned_gates,
+                            renewal_aligned_gates, decision_points, routine_signals, H,
+                            calendar_aligned_gates, realised_lags, block_starts)
 
 SEED, N = 20261122, 12000
 D = Draws(SEED, N)
@@ -151,6 +152,98 @@ def test_serial_correlation_preserves_marginal_accuracy():
     rep = np.mean(s[:, 1:] == s[:, :-1]); rep0 = np.mean(s0[:, 1:] == s0[:, :-1])
     assert abs(rep - (env.persist + (1 - env.persist) * rep0)) < 0.01   # repeats as specified
     assert np.array_equal(routine_signals(replace(BASE, persist=0.0), D), s0)
+
+
+# ------------------------------------------------------------------ v5 tests (new features)
+def test_v5_regular_calendar_matches_block_rule():
+    for b in (1, 2, 3, 4, 6):
+        env = replace(BASE, block=b)
+        assert calendar_aligned_gates(env) == aligned_gates(b)
+        assert calendar_aligned_gates(replace(BASE, starts=block_starts(env))) == aligned_gates(b)
+        a = run_policy("GA", env, D, policy_thresholds("GA", env))["net"]
+        e2 = replace(BASE, starts=block_starts(env))
+        assert np.array_equal(a, run_policy("GA", e2, D, policy_thresholds("GA", e2))["net"])
+
+
+def test_v5_realised_lag_distribution():
+    env = replace(BASE, lag=1, lag_bias=1, lag_spread=1)
+    l = realised_lags(env, D)
+    assert set(np.unique(l)) == {1, 2, 3} and abs(l.mean() - 2) < 0.03
+    assert np.all(realised_lags(replace(BASE, lag=0, lag_bias=-1), D) == 0)      # truncated at 0
+    assert np.all(realised_lags(replace(BASE, lag=2), D) == 2)                    # default: exact
+
+
+def test_v5_exact_lag_reproduces_v4():
+    """With no lag uncertainty the realised lag equals the planned lag (v4 behaviour)."""
+    env = replace(BASE, block=4, lag=1)
+    a = run_policy("GAL", env, D, policy_thresholds("GAL", env))["net"]
+    b = run_policy("GAL", replace(env, lag_bias=0, lag_spread=0), D, policy_thresholds("GAL", env))["net"]
+    assert np.array_equal(a, b)
+
+
+def test_v5_policies_never_use_realised_lag():
+    """Gates and stop rules depend only on the planned lag."""
+    e1 = replace(BASE, block=4, lag=1); e2 = replace(e1, lag_bias=1, lag_spread=1)
+    for pol in ("GAL", "GALp", "Q"):
+        assert decision_points(pol, e1) == decision_points(pol, e2)
+        assert np.array_equal(policy_thresholds(pol, e1), policy_thresholds(pol, e2))
+    assert decision_points("GALp", e1) == decision_points("GAL", replace(e1, lag=2))
+
+
+def test_v5_full_refund_removes_value_of_alignment():
+    """With full refund of unused prepaid cost, commitments are reversible and B gains."""
+    env = replace(BASE, block=4)
+    b0 = run_benchmark(env, D, False)["net"].mean()
+    b1 = run_benchmark(replace(env, recover=1.0), D, False)["net"].mean()
+    assert b1 > b0
+    r = run_policy("Q", replace(env, recover=0.5), D, policy_thresholds("Q", replace(env, recover=0.5)))
+    assert np.allclose(r["refund"], 0.5 * r["stranded"])
+
+
+def test_v5_report_fee_charged_equally():
+    env = replace(BASE, report_fee=0.1)
+    for pol in ("Q", "U", "GA"):
+        a = run_policy(pol, BASE, D, 0.18); b = run_policy(pol, env, D, 0.18)
+        active_periods = np.where(a["completed"], H, a["stop_t"])
+        assert np.allclose(a["net"] - b["net"], 0.1 * active_periods)
+
+
+def test_v5_value_based_verification_buys_only_when_worth_fee():
+    """With a prohibitive fee no verification is bought, so QVo behaves like Q."""
+    env = replace(BASE, ver_fee=50.0)
+    a = run_policy("QVo", env, D, policy_tables("QVo", env))
+    assert a["n_ver"].sum() == 0
+    assert np.array_equal(a["net"], run_policy("Q", env, D, policy_thresholds("Q", env))["net"])
+
+
+# ------------------------------------------------------------------ v7 tests
+def test_v7_known_full_echo_has_no_information_value():
+    """If the forum knows verification always echoes routine evidence, it never buys it."""
+    env = replace(BASE, rho=1.0, rho_known=True)
+    tabs = policy_tables("QVo", env)
+    assert max(tabs["evsi"][0].max(), tabs["evsi"][1].max()) < 1e-9
+    assert run_policy("QVo", env, D, tabs)["n_ver"].sum() == 0
+
+
+def test_v7_window_measure():
+    """A stop inside its decision window pays no block after the decision."""
+    env = replace(BASE, block=4, lag=1)
+    r = run_policy("GAL", env, D, policy_thresholds("GAL", env))
+    assert r["decided"].any() and np.all(r["post_paid"][r["decided"]] == 0)
+    r = run_policy("GA", env, D, policy_thresholds("GA", env))
+    assert np.all(r["post_paid"][r["decided"] & (r["stop_t"] < H)] > 0)
+    # waste per stop: GAL loses exactly the one-period lag; GA a whole further block
+    eff = lambda r: r["decided"] & (r["stop_t"] < H)
+    g = run_policy("GAL", env, D, policy_thresholds("GAL", env))
+    assert np.allclose(g["waste"][eff(g)], 1.0) and np.all(r["waste"][eff(r)] >= 4.0)
+
+
+def test_v7_refund_accounting():
+    """Net value = completion value - payments - fees + refund, refund = kappa x unused prepaid."""
+    env = replace(BASE, block=4, recover=0.4)
+    r = run_policy("Q", env, D, policy_thresholds("Q", env))
+    lhs = r["net"]; rhs = r["completed"] * D.viable * env.value - r["paid"] - r["gov"] + r["refund"]
+    assert np.allclose(lhs, rhs) and np.allclose(r["refund"], 0.4 * r["stranded"])
 
 
 if __name__ == "__main__":
